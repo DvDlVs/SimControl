@@ -30,6 +30,11 @@ CONF_CANDIDATES = [
 ]
 PRESETS_PATH = Path.home() / ".config" / "simcontrol" / "presets.json"  # legacy
 PRESETS_DIR = Path.home() / ".config" / "simcontrol" / "presets"
+SRC2GID = {
+    1: "ams2", 4: "pcars2", 2: "ac-evo", 3: "ac-rally",
+    5: "raceroom", 6: "ams1", 7: "rf2",
+}
+
 GAME_GROUPS = [
     ("ams2",     "Automobilista 2"),
     ("pcars2",   "Project CARS 2"),
@@ -39,6 +44,9 @@ GAME_GROUPS = [
     ("ams1",     "Automobilista 1"),
     ("rf2",      "rFactor 2"),
 ]
+
+SRC2LABEL = {src: lbl for src, gid in SRC2GID.items()
+           for g, lbl in GAME_GROUPS if g == gid}
 LEGACY_GAME_MAP = {
     "AMS2/PCARS2": ["ams2", "pcars2"],   # same preset as Stock for both
     "ACEvo":       ["ac-evo"],
@@ -213,6 +221,7 @@ HELP = {
     "msg_no_car": ("Entre na pista com o carro pra salvar/resetar (nome detectado pelo jogo).",
                    "Drive the car first so it can be detected, then save/reset."),
     "msg_car_loaded": ("Preset do carro aplicado", "Car preset applied"),
+    "msg_no_game": ("sem jogo", "no game"),
     "msg_car_reset": ("Voltou ao Stock", "Back to Stock"),
     "sel_game": ("Jogo:", "Game:"),
 }
@@ -404,6 +413,7 @@ class ScIpc(ctypes.Structure):
         ("track", ctypes.c_char * 64),
         ("status", ctypes.c_char * 16),
         ("settings_ack", ctypes.c_uint32),
+        ("game_id", ctypes.c_uint32),
         ("assist_enabled", ctypes.c_int32),
         ("passthrough", ctypes.c_int32),
         ("use_filter", ctypes.c_int32),
@@ -896,7 +906,6 @@ class ScWindow(Gtk.ApplicationWindow):
         self.preset_msg = Gtk.Label(xalign=0, wrap=True)
         self.preset_msg.add_css_class("sc-hint")
         box.append(self.preset_msg)
-        self._refresh_preset_list()
 
         hdr(tr("hdr_steer"))
         sl("steering_rate", "sl_steering_rate", 0.05, 1.0, 0.01, "%.2f")
@@ -979,11 +988,24 @@ class ScWindow(Gtk.ApplicationWindow):
         return "" if car.lower() in ("", "?", "(no car)") else car
 
     def _resolve_gid(self, car: str) -> str | None:
-        """Game folder that already holds a preset for this car."""
+        """Folder for this car: live game id first, then existing files."""
+        ipc = self.app.ipc.ipc
+        if self.app.ipc.alive() and ipc is not None:
+            gid = SRC2GID.get(int(ipc.game_id))
+            if gid:
+                return gid
         for gid, _lbl in GAME_GROUPS:
             if preset_file_path(gid, car).exists():
                 return gid
         return None
+
+    @staticmethod
+    def _vals_from(data: dict) -> dict | None:
+        try:
+            _pn, vals = ScWindow._extract_preset(data)
+        except ValueError:
+            vals = data if isinstance(data, dict) else None
+        return vals
 
     def _preset_picked(self, *_a) -> None:
         pass
@@ -1004,17 +1026,22 @@ class ScWindow(Gtk.ApplicationWindow):
         if not car:
             self.preset_msg.set_text(tr("msg_no_car"))
             return
-        removed = False
-        for gid, _l in GAME_GROUPS:
-            pth = preset_file_path(gid, car)
+        gid = self._resolve_gid(car) or self.gid
+        for g, _l in GAME_GROUPS:
+            pth = preset_file_path(g, car)
             if pth.exists():
                 pth.unlink()
-                removed = True
-        self.app.settings = Settings()
+        data = read_preset_file(gid, "Stock")
+        if data:
+            vals = ScWindow._vals_from(data)
+            if vals:
+                apply_preset(self.settings, vals)
+                self.gid = gid
+        else:
+            self.app.settings = Settings()
         self.sync_from_settings()
         self.app.changed()
-        self.preset_msg.set_text(f"{tr('msg_car_reset')}: {car}"
-                                 if removed else f"{tr('msg_car_reset')} (Stock)")
+        self.preset_msg.set_text(f"{tr('msg_car_reset')}: {gid}/Stock")
 
     # ----------------------------------------------- preset file io -----
 
@@ -1093,12 +1120,12 @@ class ScWindow(Gtk.ApplicationWindow):
         self.app.changed()
         car = self._current_car()
         if car:
-            write_preset_file(self.gid, car,
+            car_gid = self._resolve_gid(car) or self.gid
+            write_preset_file(car_gid, car,
                               settings_to_preset(self.app.settings))
-            self._refresh_preset_list(select=car)
-            name = f"{self.gid}/{car}"
-        else:
-            self._refresh_preset_list()
+            save_ui_prefs(game_group=car_gid)
+            self.gid = car_gid
+            name = f"{car_gid}/{car}"
         self.preset_msg.set_text(f"{tr('msg_imported')}: {name}")
 
     # -------------------------------------------------------------- misc -
@@ -1255,8 +1282,9 @@ class App(Gtk.Application):
             car = ipc.car.split(b"\x00", 1)[0].decode("utf-8", "replace") or "?"
             st = ipc.status.split(b"\x00", 1)[0].decode("ascii", "replace") or "?"
             kmh = ipc.speed_ms * 3.6
+            game = SRC2LABEL.get(int(ipc.game_id)) or tr("msg_no_game")
             self.win.set_status(
-                f"simcontrol {st}  |  {car}  |  {kmh:.0f} km/h  |  "
+                f"{game}  |  simcontrol {st}  |  {car}  |  {kmh:.0f} km/h  |  "
                 f"in{ipc.raw_steer:+.2f} out{ipc.final_steer:+.2f} ss{ipc.self_steer:+.2f}",
                 "ok" if ipc.assist_on else "wait",
             )
@@ -1278,19 +1306,32 @@ class App(Gtk.Application):
         self._car_applied = car
         gid = self.win._resolve_gid(car)
         data = read_preset_file(gid, car) if gid else None
+        if data is None and gid:
+            data = read_preset_file(gid, "Stock")  # first time in this car
+        if data is None and gid is None:
+            stock_gid = None
+            for g, _l in GAME_GROUPS:
+                d0 = read_preset_file(g, "Stock")
+                if d0:
+                    gid, data, stock_gid = g, d0, g
+                    break
         if data:
-            try:
-                _pn, vals = ScWindow._extract_preset(data)
-            except ValueError:
-                vals = data
-            apply_preset(self.settings, vals)
-            self.win.sync_from_settings()
-            self.changed()
-            save_ui_prefs(game_group=gid)
-            self.win.gid = gid
-            self.win.set_sc_msg(f"{tr('msg_car_loaded')}: {gid}/{car}")
-        else:
-            self.win.set_sc_msg(f"{tr('presets')} \u2014 Stock ({car})")
+            vals = ScWindow._vals_from(data)
+            if vals:
+                apply_preset(self.settings, vals)
+                self.win.sync_from_settings()
+                self.changed()
+                if gid and f"/{car}" not in str(data.get("name", "")) \
+                        and not preset_file_path(gid, car).exists():
+                    tag = "Stock"
+                else:
+                    tag = car
+                save_ui_prefs(game_group=gid)
+                self.win.gid = gid
+                self.win.set_sc_msg(
+                    f"{tr('msg_car_loaded')}: {gid}/{tag} ({car})")
+                return
+        self.win.set_sc_msg(f"{tr('presets')} \u2014 Stock ({car})")
 
 
 def main():

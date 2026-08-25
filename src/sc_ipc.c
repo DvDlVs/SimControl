@@ -154,6 +154,7 @@ void sc_ipc_write_live(ScIpc *ipc, const ScConfig *cfg, const ScTelem *tm,
     if (!ipc) return;
     sc_ipc_heartbeat(ipc);
     ipc->connected = tm ? tm->connected : 0;
+    ipc->game_id = (uint32_t)(tm ? tm->src : 0);
     ipc->playing = tm ? tm->playing : 0;
     ipc->assist_on = assist_on;
     ipc->speed_ms = tm ? tm->speed : 0.f;

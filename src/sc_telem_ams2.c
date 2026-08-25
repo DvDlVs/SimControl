@@ -259,6 +259,16 @@ static int open_wine_ace_phys_fd(int pid)
     unsigned char head[32];
     DIR *d;
     struct dirent *de;
+    /* Liveness beats packet magnitude: a stale mapping from a previous
+     * game generation (kept alive by wineserver as deleted-but-open) can
+     * carry a MUCH higher frozen packet counter than the live one, and
+     * best-pkt selection then latches the ghost — its watchdog evicts it,
+     * the next scan re-selects it, and the status flaps WAIT/ON. Sample
+     * every candidate twice ~120 ms apart; only ADVANCING packet ids are
+     * eligible. */
+#define ACE_PHYS_CAND_MAX 8
+    struct { int fd; unsigned pkt0; } cand[ACE_PHYS_CAND_MAX];
+    int ncand = 0;
     int best = -1;
     unsigned best_pkt = 0;
     if (pid <= 0) return -1;
@@ -290,15 +300,31 @@ static int open_wine_ace_phys_fd(int pid)
             continue;
         }
         memcpy(&pkt, head, 4);
-        if (pkt >= best_pkt) {
-            if (best >= 0) close(best);
-            best = fd;
-            best_pkt = pkt;
+        if (ncand < ACE_PHYS_CAND_MAX) {
+            cand[ncand].fd = fd;
+            cand[ncand].pkt0 = pkt;
+            ncand++;
             continue;
         }
         close(fd);
     }
     closedir(d);
+    if (ncand > 0)
+        usleep(120000);
+    for (int i = 0; i < ncand; i++) {
+        unsigned pkt1 = 0;
+        if (pread(cand[i].fd, head, sizeof(head), 0) == (ssize_t)sizeof(head))
+            memcpy(&pkt1, head, 4);
+        if (pkt1 != cand[i].pkt0 && pkt1 >= best_pkt) {
+            /* advancing: alive. Drop the previous pick. */
+            if (best >= 0) close(best);
+            best = cand[i].fd;
+            best_pkt = pkt1;
+            continue;
+        }
+        close(cand[i].fd);
+    }
+#undef ACE_PHYS_CAND_MAX
     return best;
 }
 
@@ -724,6 +750,26 @@ static int memfd_read_pcars(ScTelemSrc *t, ScTelem *out)
         close(t->memfd);
         t->memfd = -1;
         return -1;
+    }
+    /* Freeze watchdog: when the game dies the wineserver keeps the
+     * mapping alive (deleted-but-open), feeding the last bytes forever.
+     * mCurrentTime advances whenever a live game writes; if it stalls
+     * past 2.5 s the mapping is stale and must not be trusted. */
+    {
+        static float s_last_time = -1.f;
+        static double s_last_chg_t = 0;
+        double now = telem_now();
+        if (s.mCurrentTime != s_last_time) {
+            s_last_time = s.mCurrentTime;
+            s_last_chg_t = now;
+        } else if (now - s_last_chg_t > 2.5) {
+            close(t->memfd);
+            t->memfd = -1;
+            t->memfd_pid = -1;
+            t->memfd_src = 0;
+            s_last_time = -1.f;
+            return -1;
+        }
     }
     return fill_from_pcars(&s, out, t->memfd_src);
 }

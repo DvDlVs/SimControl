@@ -50,6 +50,7 @@ typedef struct ScIpc {
     char     status[16];
 
     uint32_t settings_ack;
+    uint32_t game_id;        /* SC_SRC_* of the attached game, 0 = none */
     int32_t  assist_enabled;
     int32_t  passthrough;
     int32_t  use_filter;
