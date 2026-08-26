@@ -33,6 +33,12 @@ typedef struct {
 
     int   invert_throttle;
     int   invert_brake;
+    /* rumble feedback (Option A: telemetry-driven) */
+    int   ffb_enabled;
+    int   ffb_road_cont;      /* continuous light road texture */
+    float ffb_lock_gain;      /* wheel lock -> big motor */
+    float ffb_spin_gain;      /* wheelspin  -> small motor */
+    float ffb_road_gain;      /* kerbs/texture */
 
     char  gamepad_name[128];
     char  shm_path[256];

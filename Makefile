@@ -2,7 +2,7 @@ CC      ?= gcc
 CFLAGS  ?= -std=c11 -O2 -Wall -Wextra -D_GNU_SOURCE -Iinclude
 LDFLAGS ?= -lm -lrt
 
-SRC = src/main.c src/sc_math.c src/sc_steer.c src/sc_config.c src/sc_input.c src/sc_telem_ams2.c src/sc_telem_games.c src/sc_ipc.c
+SRC = src/main.c src/sc_math.c src/sc_steer.c src/sc_config.c src/sc_input.c src/sc_ffb.c src/sc_telem_ams2.c src/sc_telem_games.c src/sc_ipc.c
 OBJ = $(SRC:.c=.o)
 
 .PHONY: all clean config

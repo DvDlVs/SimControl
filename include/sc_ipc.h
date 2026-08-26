@@ -44,6 +44,8 @@ typedef struct ScIpc {
     float    fade;
     float    limit;
     float    self_steer;
+    float    ffb_strong;
+    float    ffb_weak;
 
     char     car[64];
     char     track[64];
@@ -106,6 +108,11 @@ typedef struct ScIpc {
     int32_t  ui_swap_xz;
     int32_t  ui_invert_throttle;
     int32_t  ui_invert_brake;
+    int32_t  ui_ffb_enabled;
+    int32_t  ui_ffb_road_cont;
+    float    ui_ffb_lock_gain;
+    float    ui_ffb_spin_gain;
+    float    ui_ffb_road_gain;
 } ScIpc;
 
 ScIpc *sc_ipc_open(void);

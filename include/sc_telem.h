@@ -26,6 +26,8 @@ typedef struct {
     float game_steer;        /* mSteering -1..1 */
     int   front_grounded;
     int   rear_grounded;
+    float wheel_rps[4];      /* per-wheel rev/s when the game exposes it */
+    int   wheel_valid;       /* 1 = wheel_rps filled (AMS2/PCARS2) */
     char  car[64];
     char  track[64];
 } ScTelem;

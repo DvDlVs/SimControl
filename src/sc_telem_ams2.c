@@ -704,6 +704,9 @@ static int fill_from_pcars(const struct pcars2APIStruct *s, ScTelem *out, int sr
     out->ang_y = sc_number_guard(s->mAngularVelocity[VEC_Y], 0.f);
     out->ang_z = sc_number_guard(s->mAngularVelocity[VEC_Z], 0.f);
     out->game_steer = sc_number_guard(s->mSteering, 0.f);
+    for (int wi = 0; wi < 4; wi++)
+        out->wheel_rps[wi] = sc_number_guard(s->mTyreRPS[wi], 0.f);
+    out->wheel_valid = 1;
     out->front_grounded = ((s->mTyreFlags[TYRE_FRONT_LEFT] | s->mTyreFlags[TYRE_FRONT_RIGHT]) & TYRE_IS_ON_GROUND) ? 1 : 0;
     out->rear_grounded  = ((s->mTyreFlags[TYRE_REAR_LEFT]  | s->mTyreFlags[TYRE_REAR_RIGHT])  & TYRE_IS_ON_GROUND) ? 1 : 0;
     memcpy(out->car, s->mCarName, 63);

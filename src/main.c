@@ -5,6 +5,7 @@
 #include "sc_input.h"
 #include "sc_ipc.h"
 #include "sc_steer.h"
+#include "sc_ffb.h"
 #include "sc_telem.h"
 
 #include <errno.h>
@@ -223,6 +224,7 @@ int main(int argc, char **argv) {
         if (!assist_on) out_steer = pad.steer; /* already gamma'd */
 
         sc_input_emit(in, &pad, out_steer);
+        sc_ffb_update(in, &telem, &pad, &cfg, dt);
 
         if (ipc) sc_ipc_write_live(ipc, &cfg, &telem, &pad, &so, assist_on);
 

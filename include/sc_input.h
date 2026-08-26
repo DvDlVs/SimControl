@@ -26,5 +26,6 @@ int       sc_input_emit(ScInput *in, const ScPadState *pad, float steer_out);
 void      sc_input_list_devices(void);
 const char *sc_input_pad_name(const ScInput *in);
 int       sc_input_fd(const ScInput *in);
+void      sc_input_rumble(ScInput *in, float strong01, float weak01);
 
 #endif

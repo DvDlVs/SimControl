@@ -46,6 +46,11 @@ void sc_config_defaults(ScConfig *c) {
     c->fwd_sign = -1.f; /* AMS2 local Z is typically rearward */
     c->swap_xz = 0;
     c->invert_throttle = 0;
+    c->ffb_enabled = 1;
+    c->ffb_road_cont = 1;
+    c->ffb_lock_gain = 0.75f;
+    c->ffb_spin_gain = 0.65f;
+    c->ffb_road_gain = 0.45f;
     c->invert_brake = 0;
 
     c->gamepad_name[0] = 0;
@@ -106,6 +111,11 @@ static int parse_line(ScConfig *c, char *line) {
     F("fwd_sign", fwd_sign);
     I("swap_xz", swap_xz);
     I("invert_throttle", invert_throttle);
+    I("ffb_enabled", ffb_enabled);
+    I("ffb_road_cont", ffb_road_cont);
+    F("ffb_lock_gain", ffb_lock_gain);
+    F("ffb_spin_gain", ffb_spin_gain);
+    F("ffb_road_gain", ffb_road_gain);
     I("invert_brake", invert_brake);
 
     I("udp_port", udp_port);

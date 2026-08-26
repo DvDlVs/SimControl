@@ -30,6 +30,10 @@ typedef struct {
 struct ScInput {
     int pad_fd;
     int ui_fd;
+    int pad_ff_fd;          /* O_RDWR handle for rumble effects */
+    int ff_id_strong, ff_id_weak;
+    float last_s, last_w;
+    char pad_path[300];
     char pad_name[256];
     Axis abs_x, abs_y, abs_z, abs_rz, abs_gas, abs_brake, abs_hatx, abs_haty, abs_rx, abs_ry;
     int has_gas, has_brake_axis;
@@ -150,7 +154,8 @@ static float apply_deadzone(float x, float dz) {
     return s * (ax - dz) / (1.f - dz);
 }
 
-static int open_pad(const ScConfig *cfg, char *name_out, size_t nlen) {
+static int open_pad(const ScConfig *cfg, char *name_out, size_t nlen,
+                    char *path_out, size_t plen) {
     DIR *d = opendir("/dev/input");
     if (!d) {
         fprintf(stderr, "simcontrol: cannot open /dev/input: %s\n", strerror(errno));
@@ -174,6 +179,7 @@ static int open_pad(const ScConfig *cfg, char *name_out, size_t nlen) {
         if (match) {
             if (best >= 0) close(best);
             best = fd;
+        snprintf(path_out, plen, "%s", path);
             snprintf(best_name, sizeof(best_name), "%s", nm);
             if (cfg->gamepad_name[0]) break; /* first match of named pad */
             /* else keep scanning; last pad wins unless named */
@@ -289,13 +295,73 @@ static void emit(int fd, int type, int code, int val) {
     if (write(fd, &ev, sizeof(ev)) < 0) { /* ignore */ }
 }
 
+/* ---- rumble feedback (physical pad, ff-memless) ---------------- */
+static void sc_input_ff_setup(ScInput *in)
+{
+    struct ff_effect eff;
+    int fd;
+
+    in->ff_id_strong = in->ff_id_weak = -1;
+    if (in->pad_path[0] == '\0') return;
+    fd = open(in->pad_path, O_RDWR | O_NONBLOCK);
+    if (fd < 0) return;
+    memset(&eff, 0, sizeof(eff));
+    eff.type = FF_RUMBLE;
+    eff.id = -1;
+    eff.u.rumble.strong_magnitude = 0xFFFF;
+    if (ioctl(fd, EVIOCSFF, &eff) < 0) { close(fd); return; }
+    in->ff_id_strong = eff.id;
+    memset(&eff, 0, sizeof(eff));
+    eff.type = FF_RUMBLE;
+    eff.id = -1;
+    eff.u.rumble.weak_magnitude = 0xFFFF;
+    if (ioctl(fd, EVIOCSFF, &eff) < 0) {
+        /* remove the first one to leave the device clean */
+        eff.type = FF_RUMBLE;
+        eff.id = in->ff_id_strong;
+        ioctl(fd, EVIOCRMFF, eff.id);
+        in->ff_id_strong = -1;
+        close(fd);
+        return;
+    }
+    in->ff_id_weak = eff.id;
+    in->pad_ff_fd = fd;
+}
+
+void sc_input_rumble(ScInput *in, float strong01, float weak01)
+{
+    struct input_event ev[2];
+
+    if (!in || in->pad_ff_fd < 0 || in->ff_id_strong < 0) return;
+    strong01 = sc_clamp01(strong01);
+    weak01 = sc_clamp01(weak01);
+    if (strong01 < 0.02f) strong01 = 0.f;
+    if (weak01 < 0.02f) weak01 = 0.f;
+    if (fabsf(strong01 - in->last_s) < 0.03f &&
+        fabsf(weak01 - in->last_w) < 0.03f)
+        return;
+    memset(ev, 0, sizeof(ev));
+    ev[0].type = EV_FF; ev[0].code = in->ff_id_strong;
+    ev[0].value = (int)(strong01 * 32767.f);
+    ev[1].type = EV_FF; ev[1].code = in->ff_id_weak;
+    ev[1].value = (int)(weak01 * 32767.f);
+    if (write(in->pad_ff_fd, ev, sizeof(ev)) == (ssize_t)sizeof(ev)) {
+        in->last_s = strong01;
+        in->last_w = weak01;
+    }
+}
+
 ScInput *sc_input_open(const ScConfig *cfg) {
     ScInput *in = calloc(1, sizeof(*in));
     if (!in) return NULL;
     in->pad_fd = -1;
     in->ui_fd = -1;
+    in->pad_ff_fd = -1;
+    in->ff_id_strong = -1;
+    in->ff_id_weak = -1;
 
-    in->pad_fd = open_pad(cfg, in->pad_name, sizeof(in->pad_name));
+    in->pad_fd = open_pad(cfg, in->pad_name, sizeof(in->pad_name),
+                          in->pad_path, sizeof(in->pad_path));
     if (in->pad_fd < 0) { free(in); return NULL; }
 
     refresh_axes(in);
@@ -343,6 +409,8 @@ ScInput *sc_input_open(const ScConfig *cfg) {
         }
     }
 
+    sc_input_ff_setup(in);
+
     if (setup_uinput(in) != 0) {
         if (cfg->grab) ioctl(in->pad_fd, EVIOCGRAB, 0);
         close(in->pad_fd);
@@ -381,6 +449,15 @@ ScInput *sc_input_open(const ScConfig *cfg) {
 }
 
 void sc_input_close(ScInput *in) {
+    if (in && in->pad_ff_fd >= 0) {
+        sc_input_rumble(in, 0.f, 0.f);
+        usleep(20000);
+        sc_input_rumble(in, 0.f, 0.f);
+        if (in->ff_id_strong >= 0) ioctl(in->pad_ff_fd, EVIOCRMFF, in->ff_id_strong);
+        if (in->ff_id_weak >= 0) ioctl(in->pad_ff_fd, EVIOCRMFF, in->ff_id_weak);
+        close(in->pad_ff_fd);
+        in->pad_ff_fd = -1;
+    }
     if (!in) return;
     if (in->ui_fd >= 0) {
         ioctl(in->ui_fd, UI_DEV_DESTROY);

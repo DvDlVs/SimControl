@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #endif
 #include "sc_ipc.h"
+#include "sc_ffb.h"
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -132,6 +133,11 @@ int sc_ipc_apply_from_ui(ScIpc *ipc, ScConfig *cfg) {
     cfg->swap_xz = ipc->ui_swap_xz;
     cfg->invert_throttle = ipc->ui_invert_throttle;
     cfg->invert_brake = ipc->ui_invert_brake;
+    cfg->ffb_enabled = ipc->ui_ffb_enabled;
+    cfg->ffb_road_cont = ipc->ui_ffb_road_cont;
+    cfg->ffb_lock_gain = ipc->ui_ffb_lock_gain;
+    cfg->ffb_spin_gain = ipc->ui_ffb_spin_gain;
+    cfg->ffb_road_gain = ipc->ui_ffb_road_gain;
 
     if (cfg->steer_sign == 0.f) cfg->steer_sign = 1.f;
     if (cfg->yaw_sign == 0.f) cfg->yaw_sign = 1.f;
@@ -169,6 +175,12 @@ void sc_ipc_write_live(ScIpc *ipc, const ScConfig *cfg, const ScTelem *tm,
     ipc->fade = st ? st->fade : 0.f;
     ipc->limit = st ? st->limit : 1.f;
     ipc->self_steer = st ? st->self_steer : 0.f;
+    {
+        float fs = 0.f, fw = 0.f;
+        sc_ffb_levels(&fs, &fw);
+        ipc->ffb_strong = fs;
+        ipc->ffb_weak = fw;
+    }
 
     if (tm && tm->car[0])
         snprintf(ipc->car, sizeof(ipc->car), "%s", tm->car);

@@ -222,8 +222,22 @@ HELP = {
                    "Drive the car first so it can be detected, then save/reset."),
     "msg_car_loaded": ("Preset do carro aplicado", "Car preset applied"),
     "msg_no_game": ("sem jogo", "no game"),
+    "hdr_ffb": ("Vibração", "Force feedback"),
+    "chk_ffb_enabled": ("Vibração ligada", "Rumble enabled"),
+    "chk_ffb_road_cont": ("Textura contínua", "Continuous texture"),
+    "sl_ffb_lock_gain": ("Ganho: travou roda (grande)", "Gain: wheel lock (big)"),
+    "sl_ffb_spin_gain": ("Ganho: destracionou (pequeno)", "Gain: wheelspin (small)"),
+    "sl_ffb_road_gain": ("Ganho: zebra/asfalto", "Gain: kerbs/road"),
     "msg_car_reset": ("Voltou ao Stock", "Back to Stock"),
     "sel_game": ("Jogo:", "Game:"),
+    "ffb_enabled": (
+        "Vibração por telemetria: grande = travou roda no freio, pequeno = destracionou no gás, mais textura de zebra/asfalto.",
+        "Telemetry rumble: big motor on wheel lock under braking, small on wheelspin under throttle, plus kerb/road texture.",
+    ),
+    "ffb_road_cont": (
+        "Vibração leve contínua do asfalto, crescendo com a velocidade. Desligado: só zebras e quebras.",
+        "Light continuous road vibration scaling with speed. Off: only kerbs and bumps.",
+    ),
 }
 
 
@@ -409,6 +423,8 @@ class ScIpc(ctypes.Structure):
         ("fade", ctypes.c_float),
         ("limit", ctypes.c_float),
         ("self_steer", ctypes.c_float),
+        ("ffb_strong", ctypes.c_float),
+        ("ffb_weak", ctypes.c_float),
         ("car", ctypes.c_char * 64),
         ("track", ctypes.c_char * 64),
         ("status", ctypes.c_char * 16),
@@ -466,6 +482,11 @@ class ScIpc(ctypes.Structure):
         ("ui_swap_xz", ctypes.c_int32),
         ("ui_invert_throttle", ctypes.c_int32),
         ("ui_invert_brake", ctypes.c_int32),
+        ("ui_ffb_enabled", ctypes.c_int32),
+        ("ui_ffb_road_cont", ctypes.c_int32),
+        ("ui_ffb_lock_gain", ctypes.c_float),
+        ("ui_ffb_spin_gain", ctypes.c_float),
+        ("ui_ffb_road_gain", ctypes.c_float),
     ]
 
 
@@ -491,6 +512,11 @@ PRESET_KEYS = [
     "fwd_sign",
     "swap_xz",
     "invert_throttle",
+    "ffb_enabled",
+    "ffb_road_cont",
+    "ffb_lock_gain",
+    "ffb_spin_gain",
+    "ffb_road_gain",
     "invert_brake",
 ]
 
@@ -562,6 +588,11 @@ class Settings:
     fwd_sign: float = -1.0
     swap_xz: int = 0
     invert_throttle: int = 0
+    ffb_enabled: int = 1
+    ffb_road_cont: int = 1
+    ffb_lock_gain: float = 0.75
+    ffb_spin_gain: float = 0.65
+    ffb_road_gain: float = 0.45
     invert_brake: int = 0
     gamepad_name: str = ""
     shm_path: str = ""
@@ -648,6 +679,12 @@ swap_xz    = {int(s.swap_xz)}
 
 invert_throttle = {int(s.invert_throttle)}
 invert_brake    = {int(s.invert_brake)}
+
+ffb_enabled   = {int(s.ffb_enabled)}
+ffb_road_cont = {int(s.ffb_road_cont)}
+ffb_lock_gain = {s.ffb_lock_gain:.4f}
+ffb_spin_gain = {s.ffb_spin_gain:.4f}
+ffb_road_gain = {s.ffb_road_gain:.4f}
 """
     )
 
@@ -708,6 +745,11 @@ class Ipc:
         ipc.ui_swap_xz = int(s.swap_xz)
         ipc.ui_invert_throttle = int(s.invert_throttle)
         ipc.ui_invert_brake = int(s.invert_brake)
+        ipc.ui_ffb_enabled = int(s.ffb_enabled)
+        ipc.ui_ffb_road_cont = int(s.ffb_road_cont)
+        ipc.ui_ffb_lock_gain = float(s.ffb_lock_gain)
+        ipc.ui_ffb_spin_gain = float(s.ffb_spin_gain)
+        ipc.ui_ffb_road_gain = float(s.ffb_road_gain)
         ipc.save_request = 1
         ipc.settings_seq = ipc.settings_seq + 1
 
@@ -925,6 +967,13 @@ class ScWindow(Gtk.ApplicationWindow):
         sl("deadzone", "sl_deadzone", 0.0, 0.40, 0.01, "%.2f")
         chk("invert_throttle", "chk_invert_throttle")
         chk("invert_brake", "chk_invert_brake")
+
+        hdr(tr("hdr_ffb"))
+        chk("ffb_enabled", "chk_ffb_enabled")
+        chk("ffb_road_cont", "chk_ffb_road_cont")
+        sl("ffb_lock_gain", "sl_ffb_lock_gain", 0.0, 1.5, 0.05, "%.2f")
+        sl("ffb_spin_gain", "sl_ffb_spin_gain", 0.0, 1.5, 0.05, "%.2f")
+        sl("ffb_road_gain", "sl_ffb_road_gain", 0.0, 1.5, 0.05, "%.2f")
 
         hdr(tr("hdr_model"))
         sl("steering_lock_deg", "sl_steering_lock_deg", 8.0, 40.0, 0.5, "%.1f°")
