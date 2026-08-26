@@ -1,0 +1,14 @@
+# SimControl — access to uinput for the virtual wheel.
+# Install:
+#   sudo cp udev/99-simcontrol.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   sudo usermod -aG input $USER
+# then log out and back in.
+
+KERNEL=="uinput", SUBSYSTEM=="misc", MODE="0660", GROUP="input", OPTIONS+="static_node=uinput", TAG+="uaccess"
+
+ACTION=="add|change", KERNEL=="event*", SUBSYSTEM=="input", ATTRS{name}=="SimControl Racing Wheel", MODE="0666", ENV{ID_INPUT_JOYSTICK}="1", TAG+="uaccess", TAG+="seat"
+
+# Optional: hide a physical pad from SDL/Proton so only the virtual wheel is seen.
+# Uncomment AND adjust the name after confirming with `./simcontrol --list`.
+# ACTION=="add|change", KERNEL=="event*", SUBSYSTEM=="input", ATTRS{name}=="*Xbox*", ENV{ID_INPUT_JOYSTICK}="0"

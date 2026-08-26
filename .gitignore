@@ -1,0 +1,7 @@
+src/*.o
+*.o
+*~
+third_party/simshmbridge/
+simcontrol
+__pycache__/
+*.pyc
