@@ -692,7 +692,8 @@ static int fill_from_pcars(const struct pcars2APIStruct *s, ScTelem *out, int sr
     out->connected = 1;
     out->src = src ? src : SC_SRC_AMS2;
     out->playing = (s->mGameState == GAME_INGAME_PLAYING ||
-                    s->mGameState == GAME_INGAME_INMENU_TIME_TICKING);
+                    s->mGameState == GAME_INGAME_INMENU_TIME_TICKING ||
+                    s->mGameState == GAME_INGAME_RESTARTING);
     out->version = (int)s->mVersion;
     out->seq = s->mSequenceNumber;
     out->speed = sc_number_guard(s->mSpeed, 0.f);
@@ -753,21 +754,25 @@ static int memfd_read_pcars(ScTelemSrc *t, ScTelem *out)
     }
     /* Freeze watchdog: when the game dies the wineserver keeps the
      * mapping alive (deleted-but-open), feeding the last bytes forever.
-     * mCurrentTime advances whenever a live game writes; if it stalls
-     * past 2.5 s the mapping is stale and must not be trusted. */
+     * Use mSequenceNumber as the liveness signal: unlike mCurrentTime it
+     * advances on every live frame in both AMS2 and PCARS2 (AMS2 v14
+     * leaves mCurrentTime pinned at -1, which would trip a perpetual
+     * false-positive freeze here). If the sequence stalls past 2.5 s the
+     * mapping is stale and must not be trusted. */
     {
-        static float s_last_time = -1.f;
+        static unsigned int s_last_seq = 0;
         static double s_last_chg_t = 0;
         double now = telem_now();
-        if (s.mCurrentTime != s_last_time) {
-            s_last_time = s.mCurrentTime;
+        if (s.mSequenceNumber != s_last_seq) {
+            s_last_seq = s.mSequenceNumber;
             s_last_chg_t = now;
         } else if (now - s_last_chg_t > 2.5) {
             close(t->memfd);
             t->memfd = -1;
             t->memfd_pid = -1;
             t->memfd_src = 0;
-            s_last_time = -1.f;
+            s_last_seq = 0;
+            s_last_chg_t = 0;
             return -1;
         }
     }
@@ -1064,7 +1069,8 @@ static int sc_telem_read_sources(ScTelemSrc *t, const ScConfig *cfg, ScTelem *ou
     if (t->udp_have && (telem_now() - t->udp_last_t) < 1.5) {
         *out = t->udp_snap;
         if (t->udp_game_state == GAME_INGAME_PLAYING ||
-            t->udp_game_state == GAME_INGAME_INMENU_TIME_TICKING)
+            t->udp_game_state == GAME_INGAME_INMENU_TIME_TICKING ||
+            t->udp_game_state == GAME_INGAME_RESTARTING)
             out->playing = 1;
         else if (t->udp_game_state < 0)
             out->playing = 1; /* physics stream is enough for the bicycle model */
