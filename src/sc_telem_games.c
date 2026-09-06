@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #endif
 #include "sc_telem.h"
+#include "sc_config.h"
 #include "sc_math.h"
 #include "r3e.h"
 
@@ -34,6 +35,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include <time.h>
 #include <signal.h>
 #include <unistd.h>
@@ -728,5 +731,148 @@ int sc_rf2_read(ScTelem *out) {
     out->rear_grounded = 1;
     copy_printable(out->car, sizeof(out->car), buf + RF2_HDR + 32, 63);
     copy_printable(out->track, sizeof(out->track), buf + RF2_HDR + 96, 63);
+    return 0;
+}
+
+/* ------------------------------------------------------------------
+ * Live for Speed (SC_SRC_LFS)
+ *
+ * LFS is a native UDP game — it has no shared memory.  The sim streams
+ * two UDP packs (see cfg.txt: OutSim / OutGauge, both Mode 2, with
+ * real IP/ports; defaults 26001 / 26000):
+ *
+ *   OutSimPack:    I Time | 3f AngVel | f Heading | f Pitch | f Roll |
+ *                  3f Accel | 3f Vel | 3i Pos [. i ID]    (world m/s)
+ *   OutGaugePack:  I Time | 4c Car | H Flags | B Gear | B PLID |
+ *                  f Speed | f RPM | ... (dash cluster; Car[4] = car code)
+ *
+ * Heading/Pitch/Roll are anticlockwise Euler angles about the world
+ * Z/X/Y axes.  We rotate the world-space Vel into the car frame on the
+ * XY plane (driving is quasi-flat); the RF2 sign convention is used so
+ * the panel's lat/fwd/yaw toggles behave the same way: local_vx = left+,
+ * local_vz = back+, ang_y = yaw rate about up.
+ * ---------------------------------------------------------------- */
+static int    s_lfs_os = -1, s_lfs_og = -1;      /* sockets (-1 unbound, -2 dead) */
+static double s_lfs_last = 0.0;                  /* last good OutSim arrival */
+static double s_lfs_osv[4] = {0, 0, 0, 0};       /* last Vel[3] + AngVel[2] */
+static float  s_lfs_osh = 0.f;                   /* last Heading */
+static char   s_lfs_car[16] = "[LFS]";
+static float  s_lfs_rpm = 0.f;
+static int    s_lfs_logged = 0;
+
+static int lfs_bind(int *fd, int port, const char *what) {
+    int s, one = 1, fl;
+    struct sockaddr_in a;
+    if (*fd >= 0 || *fd == -2 || port <= 0) return -1;
+    s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0) {
+        fprintf(stderr, "simcontrol: LFS %s socket: %s\n", what, strerror(errno));
+        *fd = -2;
+        return -1;
+    }
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    fl = fcntl(s, F_GETFL, 0);
+    fcntl(s, F_SETFL, fl | O_NONBLOCK);
+    memset(&a, 0, sizeof(a));
+    a.sin_family = AF_INET;
+    a.sin_port = htons((uint16_t)port);
+    a.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(s, (struct sockaddr *)&a, sizeof(a)) != 0) {
+        fprintf(stderr, "simcontrol: LFS %s bind :%d: %s\n", what, port, strerror(errno));
+        close(s);
+        *fd = -2;
+        return -1;
+    }
+    *fd = s;
+    fprintf(stderr, "simcontrol: listening for LFS %s on 0.0.0.0:%d\n", what, port);
+    return 0;
+}
+
+int sc_lfs_read(ScTelem *out, const ScConfig *cfg) {
+    double now;
+    unsigned char buf[512];
+    ssize_t n;
+    int got = 0;
+    if (!out) return -1;
+    memset(out, 0, sizeof(*out));
+    if (!cfg || cfg->lfs_outsim_port <= 0) return -1;
+
+    /* OutSim: physics.  Drain, keep the last valid pack of the batch. */
+    lfs_bind(&s_lfs_os, cfg->lfs_outsim_port, "OutSim");
+    while (s_lfs_os > 0 && (n = recv(s_lfs_os, buf, sizeof(buf), 0)) >= (ssize_t)64) {
+        float vel[3], ang[3], head;
+        memcpy(ang, buf + 4, 12);
+        memcpy(&head, buf + 16, 4);
+        memcpy(vel, buf + 40, 12);
+        if (!isfinite(head) || !isfinite(ang[0]) || !isfinite(ang[1]) ||
+            !isfinite(ang[2]) || !isfinite(vel[0]) || !isfinite(vel[1]) ||
+            !isfinite(vel[2]))
+            continue;
+        s_lfs_osv[0] = vel[0]; s_lfs_osv[1] = vel[1]; s_lfs_osv[2] = vel[2];
+        s_lfs_osv[3] = ang[2];   /* yaw rate about world up (Z) */
+        s_lfs_osh = head;
+        got = 1;
+    }
+
+    /* OutGauge: car code + rpm.  Car[4] is the LFS model code, a stable
+     * per-car preset key (e.g. "XFG", "FZ50").  Follows the code as the
+     * player switches cars mid-session. */
+    lfs_bind(&s_lfs_og, cfg->lfs_outgauge_port, "OutGauge");
+    while (s_lfs_og > 0 && (n = recv(s_lfs_og, buf, sizeof(buf), 0)) >= (ssize_t)20) {
+        float rpm;
+        char code[5];
+        memcpy(&rpm, buf + 16, 4);
+        if (isfinite(rpm) && rpm > 0.f) s_lfs_rpm = rpm;
+        memcpy(code, buf + 4, 4);
+        code[4] = 0;
+        while (code[0] == ' ') memmove(code, code + 1, 5 - 1);
+        while (code[0] && code[strlen(code) - 1] == ' ') code[strlen(code) - 1] = 0;
+        if (isprint((unsigned char)code[0]) &&
+            strcmp(code, s_lfs_car) != 0) {
+            fprintf(stderr, "simcontrol: LFS car %s\n", code);
+            snprintf(s_lfs_car, sizeof(s_lfs_car), "%s", code);
+        }
+    }
+
+    now = games_now();
+    if (!got) {
+        /* No fresh pack this tick: connect only while the stream is
+         * recent, fail fast when LFS is on the menu or closed. */
+        if (s_lfs_last == 0.0 || now - s_lfs_last > 1.5) return -1;
+    } else {
+        s_lfs_last = now;
+        if (!s_lfs_logged) {
+            fprintf(stderr, "simcontrol: LFS OutSim telemetry live (v %.0f m/s)\n",
+                    sqrtf((float)(s_lfs_osv[0] * s_lfs_osv[0] +
+                                  s_lfs_osv[1] * s_lfs_osv[1] +
+                                  s_lfs_osv[2] * s_lfs_osv[2])));
+            s_lfs_logged = 1;
+        }
+    }
+
+    {
+        float ch = cosf(s_lfs_osh), sh = sinf(s_lfs_osh);
+        float fwd_x = -sh, fwd_y = ch;              /* nose at +Y when h=0 */
+        float rgt_x = ch, rgt_y = sh;               /* right side of the car */
+        float lon, lat;
+        lon = (float)(s_lfs_osv[0] * fwd_x + s_lfs_osv[1] * fwd_y);
+        lat = (float)(s_lfs_osv[0] * rgt_x + s_lfs_osv[1] * rgt_y);
+        out->connected = 1;
+        out->playing = 1;               /* OutSim streams only while driving */
+        out->src = SC_SRC_LFS;
+        out->local_vx = sc_number_guard(-lat, 0.f);     /* left+ (RF2 parity) */
+        out->local_vy = sc_number_guard((float)s_lfs_osv[2], 0.f);
+        out->local_vz = sc_number_guard(-lon, 0.f);     /* back+ (RF2 parity) */
+        out->ang_y = sc_number_guard((float)s_lfs_osv[3], 0.f);
+        out->speed = sqrtf((float)(s_lfs_osv[0] * s_lfs_osv[0] +
+                                   s_lfs_osv[1] * s_lfs_osv[1] +
+                                   s_lfs_osv[2] * s_lfs_osv[2]));
+        out->rpm = s_lfs_rpm;
+        out->front_grounded = 1;
+        out->rear_grounded = 1;
+    }
+    copy_printable(out->car, sizeof(out->car),
+                   (const unsigned char *)s_lfs_car, strlen(s_lfs_car));
+    snprintf(out->track, sizeof(out->track), "[LFS]");
     return 0;
 }

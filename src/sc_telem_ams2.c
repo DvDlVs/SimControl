@@ -975,7 +975,7 @@ static int copy_consistent(ScTelemSrc *t, struct pcars2APIStruct *dst) {
  * the steering loop once per second. */
 enum {
   RD_NONE = 0, RD_PCARS_MEMFD, RD_ACEVO, RD_PCARS1,
-  RD_R3E, RD_RF1, RD_RF2, RD_LEGACY_MAP, RD_UDP
+  RD_R3E, RD_RF1, RD_RF2, RD_LFS, RD_LEGACY_MAP, RD_UDP
 };
 
 static int sc_telem_read_sources(ScTelemSrc *t, const ScConfig *cfg, ScTelem *out) {
@@ -992,6 +992,7 @@ static int sc_telem_read_sources(ScTelemSrc *t, const ScConfig *cfg, ScTelem *ou
         case RD_R3E:         ok = sc_r3e_read(out); break;
         case RD_RF1:         ok = sc_rf1_read(out); break;
         case RD_RF2:         ok = sc_rf2_read(out); break;
+        case RD_LFS:         ok = sc_lfs_read(out, cfg); break;
         case RD_LEGACY_MAP:
             if (t->map) {
                 struct pcars2APIStruct s;
@@ -1049,6 +1050,10 @@ static int sc_telem_read_sources(ScTelemSrc *t, const ScConfig *cfg, ScTelem *ou
     }
     if (sc_rf2_read(out) == 0) {
         cur_rd = RD_RF2;
+        return 0;
+    }
+    if (sc_lfs_read(out, cfg) == 0) {
+        cur_rd = RD_LFS;
         return 0;
     }
 

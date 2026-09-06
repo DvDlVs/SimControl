@@ -32,7 +32,7 @@ PRESETS_PATH = Path.home() / ".config" / "simcontrol" / "presets.json"  # legacy
 PRESETS_DIR = Path.home() / ".config" / "simcontrol" / "presets"
 SRC2GID = {
     1: "ams2", 4: "pcars2", 8: "pcars1", 2: "ac-evo", 3: "ac-rally",
-    5: "raceroom", 6: "ams1", 7: "rf2",
+    5: "raceroom", 6: "ams1", 7: "rf2", 9: "lfs",
 }
 
 GAME_GROUPS = [
@@ -44,6 +44,7 @@ GAME_GROUPS = [
     ("raceroom", "RaceRoom"),
     ("ams1",     "Automobilista 1"),
     ("rf2",      "rFactor 2"),
+    ("lfs",      "Live for Speed"),
 ]
 
 SRC2LABEL = {src: lbl for src, gid in SRC2GID.items()

@@ -13,6 +13,7 @@
 #define SC_SRC_RF1      6
 #define SC_SRC_RF2      7
 #define SC_SRC_PCARS1   8
+#define SC_SRC_LFS      9
 
 typedef struct {
     int   connected;
@@ -43,5 +44,6 @@ void         sc_telem_to_vehicle(const ScTelem *t, const ScConfig *cfg, ScVehicl
 int  sc_r3e_read(ScTelem *out);      /* RaceRoom, native $R3E shm */
 int  sc_rf1_read(ScTelem *out);      /* AMS1, $rFactorShared$ plugin shm */
 int  sc_rf2_read(ScTelem *out);      /* rFactor 2 plugin telemetry map */
+int  sc_lfs_read(ScTelem *out, const ScConfig *cfg); /* Live for Speed, OutSim/OutGauge UDP */
 
 #endif

@@ -37,6 +37,8 @@ typedef struct {
     char  gamepad_name[128];
     char  shm_path[256];
     int   udp_port;
+    int   lfs_outsim_port;
+    int   lfs_outgauge_port;
     char  path[512];
 } ScConfig;
 

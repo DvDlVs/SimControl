@@ -5,7 +5,7 @@ virtual wheel and filters its input with live game telemetry.
 
 Games: **Automobilista 2**, **Project CARS 2**, **Project CARS 1**,
 **Assetto Corsa Evo**, **Assetto Corsa Rally**, **RaceRoom**,
-**Automobilista 1**, **rFactor 2**.
+**Automobilista 1**, **rFactor 2**, **Live for Speed**.
 
 ## Usage
 
@@ -116,3 +116,27 @@ Depends on **[rF2SharedMemoryMapPlugin](https://github.com/TheIronWolfModding/rF
 
 The reader uses `vehicles[0]` from the map — correct offline; for multiplayer
 slots other than 0, ask to have the scoring map added.
+
+## Live for Speed
+
+Pure UDP game (no shared memory). It streams two packs set in `cfg.txt`
+(Options → Misc has equivalents in-game): **OutSim** for physics and
+**OutGauge** for the car model code (used as the preset key) and RPM.
+
+1. In `cfg.txt` set (then restart LFS):
+   ```
+   OutSim Mode 2
+   OutSim IP 127.0.0.1
+   OutSim Port 26001
+   OutGauge Mode 2
+   OutGauge IP 127.0.0.1
+   OutGauge Port 26000
+   ```
+2. Optional: point the ports in `simcontrol.conf` (`lfs_outsim_port` /
+   `lfs_outgauge_port`) at whatever LFS uses
+3. Drive; simcontrol logs "LFS OutSim telemetry live"
+
+OutGauge only streams while the camera is inside the car — in external views
+the car falls back to the generic `LFS` preset instead of the model code.
+Signs follow the rFactor 2 convention (`yaw_sign`/`lat_sign`/`fwd_sign` in
+the conf correct any inverted steering, as with the other sources).
