@@ -1223,6 +1223,14 @@ class App(Gtk.Application):
         self.sc_proc: subprocess.Popen | None = None
         self._sc_restart_src = 0
         self._car_applied: str | None = None
+        # Encerra o simcontrol com o painel: a janela (X), a saída normal do
+        # app e sinais externos (o wrapper Steam mata a UI via SIGTERM).
+        self.connect("shutdown", lambda *_a: self.stop_simcontrol())
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig,
+                                 lambda *_a, s=sig: (self.stop_simcontrol(),
+                                                     self.quit()))
+            del sig
 
     def do_activate(self):
         prov = Gtk.CssProvider()
@@ -1264,6 +1272,14 @@ class App(Gtk.Application):
         try:
             SIMCONTROL_LOG.parent.mkdir(parents=True, exist_ok=True)
             logf = open(SIMCONTROL_LOG, "ab")
+
+            def _die_with_parent():
+                try:
+                    libc = ctypes.CDLL("libc.so.6", use_errno=True)
+                    libc.prctl(1, signal.SIGTERM, 0, 0, 0)  # PR_SET_PDEATHSIG
+                except Exception:
+                    pass
+
             self.sc_proc = subprocess.Popen(
                 [str(self.sc_bin), "-c", str(self.conf_path)],
                 stdout=logf,
@@ -1271,6 +1287,7 @@ class App(Gtk.Application):
                 stdin=subprocess.DEVNULL,
                 cwd=str(self.sc_bin.parent),
                 start_new_session=True,
+                preexec_fn=_die_with_parent,
             )
             if self.win:
                 self.win.set_sc_msg(
@@ -1332,6 +1349,7 @@ class App(Gtk.Application):
     def _on_close(self, *_a):
         save_conf(self.conf_path, self.settings)
         self.ipc.push(self.settings)
+        self.stop_simcontrol()
         return False
 
     def _tick(self):
