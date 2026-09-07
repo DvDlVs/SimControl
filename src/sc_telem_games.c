@@ -917,6 +917,7 @@ static float  s_fh_rpm = 0.f;
 static int    s_fh_ordinal = -1;
 static char   s_fh_car[64] = "[FH6]";
 static int    s_fh_logged = 0;
+static int    s_fh_front = 1, s_fh_rear = 1;   /* last good grounded */
 static dgate  s_fh_g;
 
 /* Forza IsRaceOn (s8 @0) flickers to 0 mid-drive (menu popups, render
@@ -995,10 +996,6 @@ int sc_fh6_read(ScTelem *out, const ScConfig *cfg) {
     }
 
     {
-        float t[4], front = 1.f, rear = 1.f;
-        memcpy(t, buf + 68, sizeof(t));
-        if (isfinite(t[0])) front = (t[0] + t[1] > 0.05f) ? 1.f : 0.f;
-        if (isfinite(t[2])) rear = (t[2] + t[3] > 0.05f) ? 1.f : 0.f;
         out->connected = 1;
         if (race_on) {
             s_fh_play_n = 0;
@@ -1016,8 +1013,16 @@ int sc_fh6_read(ScTelem *out, const ScConfig *cfg) {
             sqrtf(s_fh_v[0] * s_fh_v[0] + s_fh_v[1] * s_fh_v[1] +
                   s_fh_v[2] * s_fh_v[2]), 0.f);
         out->rpm = s_fh_rpm;
-        out->front_grounded = (int)front;
-        out->rear_grounded = (int)rear;
+        if (got) {   /* buf only carries data when a packet arrived */
+            float t[4], front = 1.f, rear = 1.f;
+            memcpy(t, buf + 68, sizeof(t));
+            if (isfinite(t[0])) front = (t[0] + t[1] > 0.05f) ? 1.f : 0.f;
+            if (isfinite(t[2])) rear = (t[2] + t[3] > 0.05f) ? 1.f : 0.f;
+            s_fh_front = (int)front;
+            s_fh_rear = (int)rear;
+        }
+        out->front_grounded = s_fh_front;
+        out->rear_grounded = s_fh_rear;
     }
     if (!delta_sane(&s_fh_g, out->local_vx, out->local_vy,
                     out->local_vz, out->ang_y))
