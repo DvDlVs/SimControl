@@ -32,7 +32,7 @@ PRESETS_PATH = Path.home() / ".config" / "simcontrol" / "presets.json"  # legacy
 PRESETS_DIR = Path.home() / ".config" / "simcontrol" / "presets"
 SRC2GID = {
     1: "ams2", 4: "pcars2", 8: "pcars1", 2: "ac-evo", 3: "ac-rally",
-    5: "raceroom", 6: "ams1", 7: "rf2", 9: "lfs",
+    5: "raceroom", 6: "ams1", 7: "rf2", 9: "lfs", 10: "fh6",
 }
 
 GAME_GROUPS = [
@@ -45,6 +45,7 @@ GAME_GROUPS = [
     ("ams1",     "Automobilista 1"),
     ("rf2",      "rFactor 2"),
     ("lfs",      "Live for Speed"),
+    ("fh6",      "Forza Horizon 6"),
 ]
 
 SRC2LABEL = {src: lbl for src, gid in SRC2GID.items()
@@ -495,6 +496,63 @@ PRESET_KEYS = [
     "invert_throttle",
     "invert_brake",
 ]
+
+# Factory-default Stock for Forza Horizon 6: the validated FH6-325 tune,
+# used instead of the generic defaults. The generic defaults still seed
+# the other games' Stock.
+FORZA_STOCK_VALUES = {
+    "steering_rate": 0.25,
+    "rate_increase_with_speed": 0.0,
+    "target_slip_deg": 5.0,
+    "target_slip_scale": 1.0048,
+    "self_steer_response": 0.0455,
+    "damping_strength": 0.9030,
+    "max_self_steer_angle": 6.0682,
+    "countersteer_response": 0.1939,
+    "max_dynamic_limit_reduction": 5.0,
+    "steering_lock_deg": 20.0,
+    "wheelbase_m": 2.6,
+    "stick_gamma": 1.4,
+    "deadzone": 0.0,
+    "steer_sign": 1.0,
+    "yaw_sign": 1.0,
+    "lat_sign": 1.0,
+    "fwd_sign": -1.0,
+    "swap_xz": 0,
+    "invert_throttle": 0,
+    "invert_brake": 0,
+}
+
+# Factory "Drift" preset for FH6, based on the validated car-3249 drift
+# tune: keeps the Stock feel but trims the self-steer headroom (3 deg
+# instead of ~6) with slightly more damping, leaving the angle to the
+# driver. Shipped alongside Stock so a fresh install gets both; load it
+# and Save onto any car to apply it.
+FORZA_DRIFT_VALUES = {
+    "steering_rate": 0.25,
+    "rate_increase_with_speed": 0.0,
+    "target_slip_deg": 5.0,
+    "target_slip_scale": 1.0048,
+    "self_steer_response": 0.0455,
+    "damping_strength": 0.9060,
+    "max_self_steer_angle": 3.0,
+    "countersteer_response": 0.1939,
+    "max_dynamic_limit_reduction": 5.0,
+    "steering_lock_deg": 20.0,
+    "wheelbase_m": 2.6,
+    "stick_gamma": 1.4,
+    "deadzone": 0.0,
+    "steer_sign": 1.0,
+    "yaw_sign": 1.0,
+    "lat_sign": 1.0,
+    "fwd_sign": -1.0,
+    "swap_xz": 0,
+    "invert_throttle": 0,
+    "invert_brake": 0,
+}
+
+# FH6 preset folder seeded with the factory Stock + Drift presets.
+FORZA_GIDS = ("fh6",)
 
 
 def settings_to_preset(s: Settings) -> dict:
@@ -1343,12 +1401,19 @@ def bootstrap_stock_presets() -> None:
                 if f.name in PRESET_KEYS}
     for gid, _lbl in GAME_GROUPS:
         target = PRESETS_DIR / gid / "Stock.json"
-        if target.exists():
-            continue
-        try:
-            write_preset_file(gid, "Stock", defaults)
-        except OSError:
-            pass
+        if not target.exists():
+            stock = FORZA_STOCK_VALUES if gid in FORZA_GIDS else defaults
+            try:
+                write_preset_file(gid, "Stock", stock)
+            except OSError:
+                pass
+        if gid in FORZA_GIDS:
+            drift = PRESETS_DIR / gid / "Drift.json"
+            if not drift.exists():
+                try:
+                    write_preset_file(gid, "Drift", FORZA_DRIFT_VALUES)
+                except OSError:
+                    pass
 
 
 def main():

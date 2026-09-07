@@ -39,6 +39,7 @@ typedef struct {
     int   udp_port;
     int   lfs_outsim_port;
     int   lfs_outgauge_port;
+    int   fh6_out_port;
     char  path[512];
 } ScConfig;
 

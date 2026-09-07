@@ -760,13 +760,13 @@ static char   s_lfs_car[16] = "[LFS]";
 static float  s_lfs_rpm = 0.f;
 static int    s_lfs_logged = 0;
 
-static int lfs_bind(int *fd, int port, const char *what) {
+static int sport_bind(int *fd, int port, const char *tag, const char *what) {
     int s, one = 1, fl;
     struct sockaddr_in a;
     if (*fd >= 0 || *fd == -2 || port <= 0) return -1;
     s = socket(AF_INET, SOCK_DGRAM, 0);
     if (s < 0) {
-        fprintf(stderr, "simcontrol: LFS %s socket: %s\n", what, strerror(errno));
+        fprintf(stderr, "simcontrol: %s %s socket: %s\n", tag, what, strerror(errno));
         *fd = -2;
         return -1;
     }
@@ -778,14 +778,18 @@ static int lfs_bind(int *fd, int port, const char *what) {
     a.sin_port = htons((uint16_t)port);
     a.sin_addr.s_addr = htonl(INADDR_ANY);
     if (bind(s, (struct sockaddr *)&a, sizeof(a)) != 0) {
-        fprintf(stderr, "simcontrol: LFS %s bind :%d: %s\n", what, port, strerror(errno));
+        fprintf(stderr, "simcontrol: %s %s bind :%d: %s\n", tag, what, port, strerror(errno));
         close(s);
         *fd = -2;
         return -1;
     }
     *fd = s;
-    fprintf(stderr, "simcontrol: listening for LFS %s on 0.0.0.0:%d\n", what, port);
+    fprintf(stderr, "simcontrol: listening for %s %s on 0.0.0.0:%d\n", tag, what, port);
     return 0;
+}
+
+static int lfs_bind(int *fd, int port, const char *what) {
+    return sport_bind(fd, port, "LFS", what);
 }
 
 int sc_lfs_read(ScTelem *out, const ScConfig *cfg) {
@@ -874,5 +878,152 @@ int sc_lfs_read(ScTelem *out, const ScConfig *cfg) {
     copy_printable(out->car, sizeof(out->car),
                    (const unsigned char *)s_lfs_car, strlen(s_lfs_car));
     snprintf(out->track, sizeof(out->track), "[LFS]");
+    return 0;
+}
+
+/* ------------------------------------------------------------------
+ * Forza Horizon 6 (SC_SRC_FH6) — "Data Out" UDP
+ *
+ * Pure UDP like LFS: the game streams 324-byte packets on one port
+ * (Settings -> Difficulty -> Data Out: IP + port).  Layout confirmed
+ * against a live FH6 capture (car-local, Y-up, Z forward).
+ *
+ *   s8  IsRaceOn      @0      f32 EngineMaxRpm @8   EngineIdleRpm @12
+ *   f32 EngineCurrentRpm @16  f32 Accel X/Y/Z  @20
+ *   f32 Velocity X/Y/Z @32    (car-LOCAL: X right, Y up, Z forward)
+ *   f32 AngularVel X/Y/Z @44  (AngVel.y = yaw rate about up)
+ *   f32 Yaw/Pitch/Roll @56
+ *   f32 NormalizedSuspensionTravel x4 @68   TireSlipRatio x4 @84
+ *   f32 WheelRotationSpeed x4 @100
+ *   f32 TireSlipAngle x4 @164 (not used; angle units vary across games)
+ *   f32 SuspensionTravelMeters x4 @196
+ *   s32 CarOrdinal @212   s32 CarClass @216  s32 PerfIndex @220
+ *   s32 Drivetrain @224   s32 NumCyl @228    f32 PositionN x3 @232
+ *   f32 Speed @256 (m/s scalar; not used — speed is derived from the
+ *        velocity vector magnitude instead)
+ *
+ * No heading rotation: the velocity is already in the car frame.  We
+ * map into the RF2 convention (local_vx = left+, local_vz = back+,
+ * ang_y = yaw rate left+); +AngVel.y reads as a right turn, so it is
+ * negated.  The panel's yaw/lat/fwd toggles fix any residual mismatch.
+ * ---------------------------------------------------------------- */
+
+static int    s_fh_fd = -1;       /* socket (-1 unbound, -2 dead) */
+static double s_fh_last = 0.0;    /* last good packet arrival */
+static int    s_fh_race_on = 0;
+static float  s_fh_v[3] = {0, 0, 0};
+static float  s_fh_yawrate = 0.f;
+static float  s_fh_rpm = 0.f;
+static int    s_fh_ordinal = -1;
+static char   s_fh_car[64] = "[FH6]";
+static int    s_fh_logged = 0;
+static dgate  s_fh_g;
+
+/* Forza IsRaceOn (s8 @0) flickers to 0 mid-drive (menu popups, render
+ * hitches, DLC/mod overlays). A raw flip makes main.c yank the wheel
+ * between processed assist and raw stick input, which reads as violent
+ * side-to-side shaking. Latch it: require FH_PLAY_OFF consecutive
+ * non-race frames (~0.5 s at 60 Hz) before leaving playing state. */
+#define FH_PLAY_OFF 30
+static int s_fh_play = 0;    /* latched playing state */
+static int s_fh_play_n = 0;  /* consecutive non-race frames while latched on */
+
+/* Loose sanity for Forza: local speeds can reach ~120 m/s, and there is
+ * no heading in the sanity set (velocity is local, yaw is irrelevant). */
+static int fh_vel_sane(float vx, float vy, float vz, float rpm) {
+    if (!isfinite(vx) || !isfinite(vy) || !isfinite(vz) || !isfinite(rpm))
+        return 0;
+    if (fabsf(vx) > 200.f || fabsf(vy) > 60.f || fabsf(vz) > 200.f)
+        return 0;
+    if (rpm < 0.f || rpm > 30000.f)
+        return 0;
+    return 1;
+}
+
+int sc_fh6_read(ScTelem *out, const ScConfig *cfg) {
+    double now;
+    unsigned char buf[512];
+    ssize_t n;
+    int got = 0, race_on = 0;
+    if (!out) return -1;
+    memset(out, 0, sizeof(*out));
+    if (!cfg || cfg->fh6_out_port <= 0) return -1;
+
+    sport_bind(&s_fh_fd, cfg->fh6_out_port, "FH", "Data Out");
+    while (s_fh_fd > 0 && (n = recv(s_fh_fd, buf, sizeof(buf), 0)) >= (ssize_t)244) {
+        float vx, vy, vz, ry, rpm;
+        int8_t ion;
+        int32_t ord;
+        memcpy(&ion, buf + 0, 1);
+        memcpy(&rpm, buf + 16, 4);
+        memcpy(&vx, buf + 32, 4);
+        memcpy(&vy, buf + 36, 4);
+        memcpy(&vz, buf + 40, 4);
+        memcpy(&ry, buf + 48, 4);
+        memcpy(&ord, buf + 212, 4);
+        if (!fh_vel_sane(vx, vy, vz, rpm))
+            continue;
+        s_fh_v[0] = vx; s_fh_v[1] = vy; s_fh_v[2] = vz;
+        s_fh_yawrate = ry;
+        if (rpm > 0.f) s_fh_rpm = rpm;
+        s_fh_race_on = (ion != 0);
+        if (ord != s_fh_ordinal) {
+            if (ord > 0) {
+                fprintf(stderr, "simcontrol: FH6 car %d\n", ord);
+                snprintf(s_fh_car, sizeof(s_fh_car), "FH6-%d", ord);
+            }
+            s_fh_ordinal = ord;
+        }
+        race_on = s_fh_race_on;
+        got = 1;
+    }
+
+    now = games_now();
+    if (!got) {
+        /* No fresh packet this tick: stay connected only while the
+         * stream is recent, fail fast when the game is closed. */
+        if (s_fh_last == 0.0 || now - s_fh_last > 1.5) {
+            s_fh_ordinal = -1;
+            return -1;
+        }
+    } else {
+        s_fh_last = now;
+        if (!s_fh_logged) {
+            fprintf(stderr, "simcontrol: Forza Horizon 6 Data Out telemetry live\n");
+            s_fh_logged = 1;
+        }
+    }
+
+    {
+        float t[4], front = 1.f, rear = 1.f;
+        memcpy(t, buf + 68, sizeof(t));
+        if (isfinite(t[0])) front = (t[0] + t[1] > 0.05f) ? 1.f : 0.f;
+        if (isfinite(t[2])) rear = (t[2] + t[3] > 0.05f) ? 1.f : 0.f;
+        out->connected = 1;
+        if (race_on) {
+            s_fh_play_n = 0;
+            s_fh_play = 1;
+        } else if (s_fh_play) {
+            if (++s_fh_play_n >= FH_PLAY_OFF) s_fh_play = 0;
+        }
+        out->playing = s_fh_play;
+        out->src = SC_SRC_FH6;
+        out->local_vx = sc_number_guard(-s_fh_v[0] * cfg->lat_sign, 0.f);   /* +X right -> left+ */
+        out->local_vy = sc_number_guard(s_fh_v[1], 0.f);
+        out->local_vz = sc_number_guard(-s_fh_v[2], 0.f);   /* +Z forward -> back+ */
+        out->ang_y = sc_number_guard(-s_fh_yawrate * cfg->yaw_sign, 0.f);   /* +AngVel.y = right turn */
+        out->speed = sc_number_guard(
+            sqrtf(s_fh_v[0] * s_fh_v[0] + s_fh_v[1] * s_fh_v[1] +
+                  s_fh_v[2] * s_fh_v[2]), 0.f);
+        out->rpm = s_fh_rpm;
+        out->front_grounded = (int)front;
+        out->rear_grounded = (int)rear;
+    }
+    if (!delta_sane(&s_fh_g, out->local_vx, out->local_vy,
+                    out->local_vz, out->ang_y))
+        return -1;   /* impossible jump vs last accepted sample */
+    copy_printable(out->car, sizeof(out->car),
+                   (const unsigned char *)s_fh_car, strlen(s_fh_car));
+    snprintf(out->track, sizeof(out->track), "[FH6]");
     return 0;
 }

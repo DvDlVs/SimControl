@@ -5,7 +5,7 @@ virtual wheel and filters its input with live game telemetry.
 
 Games: **Automobilista 2**, **Project CARS 2**, **Project CARS 1**,
 **Assetto Corsa Evo**, **Assetto Corsa Rally**, **RaceRoom**,
-**Automobilista 1**, **rFactor 2**, **Live for Speed**.
+**Automobilista 1**, **rFactor 2**, **Live for Speed**, **Forza Horizon 6**.
 
 ## Usage
 
@@ -64,7 +64,8 @@ practice this means:
 - fast-corner behavior is unaffected and matches the original's feel
 
 Per-car presets are the intended compensation: save one preset per car in
-the game's preset folder.
+the game's preset folder. Forza Horizon 6 also ships factory
+`Stock`/`Drift` presets to start from.
 
 ## Project CARS 1
 
@@ -140,3 +141,26 @@ OutGauge only streams while the camera is inside the car — in external views
 the car falls back to the generic `LFS` preset instead of the model code.
 Signs follow the rFactor 2 convention (`yaw_sign`/`lat_sign`/`fwd_sign` in
 the conf correct any inverted steering, as with the other sources).
+
+## Forza Horizon 6
+
+Pure UDP input, same shape as LFS. In-game enable
+**Settings → Difficulty → Data Out**: `ON`, IP `127.0.0.1`, port `5300`
+(any port — point `fh6_out_port` in `simcontrol.conf` at it; `0` disables).
+
+The reader parses the Forza "Data Out" 324-byte packet. `IsRaceOn` drives
+`playing` (latched, since FH6 flickers it mid-drive), `EngineCurrentRpm`
+feeds the HUD, and `CarOrdinal` is the per-car preset key (`FH6-<ordinal>`
+folder). The velocity is already in the car frame (X right, Y up, Z
+forward) and is mapped into the same rFactor 2 sign convention as every
+other source (`local_vx` left+, `local_vz` back+, `ang_y` yaw rate left+).
+
+The FH6 preset folder ships with two factory presets: `Stock` (the
+validated FH6 stock feel) and `Drift`, a variant tuned for drift cars
+from the validated FH6-3249 tune — it trims the self-steer headroom
+(`max_self_steer_angle` ~3°) with slightly more damping, because FH's
+automatic countersteer saturates hard even at weak settings. To apply
+`Drift` to a car, import `Drift.json` in the panel and hit Save; per-car
+presets then override both as usual.
+
+`fh6_out_port = 0` switches the block fully off.

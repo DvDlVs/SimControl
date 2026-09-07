@@ -53,6 +53,7 @@ void sc_config_defaults(ScConfig *c) {
     c->udp_port = 5606;
     c->lfs_outsim_port = 26001;
     c->lfs_outgauge_port = 26000;
+    c->fh6_out_port = 5300;
 }
 
 static char *trim(char *s) {
@@ -113,6 +114,7 @@ static int parse_line(ScConfig *c, char *line) {
     I("udp_port", udp_port);
     I("lfs_outsim_port", lfs_outsim_port);
     I("lfs_outgauge_port", lfs_outgauge_port);
+    I("fh6_out_port", fh6_out_port);
     if (strcmp(key, "gamepad_name") == 0) { set_str(c->gamepad_name, sizeof(c->gamepad_name), val); return 1; }
     if (strcmp(key, "shm_path") == 0) { set_str(c->shm_path, sizeof(c->shm_path), val); return 1; }
 
@@ -218,6 +220,9 @@ int sc_config_save(const ScConfig *c) {
         "lfs_outsim_port   = %d\n"
         "lfs_outgauge_port = %d\n"
         "\n"
+        "# Forza Horizon 6 \"Data Out\" UDP port. 0 = off.\n"
+        "fh6_out_port      = %d\n"
+        "\n"
         "# --- steering ---\n"
         "steering_rate                = %.4f\n"
         "rate_increase_with_speed     = %.4f\n"
@@ -252,7 +257,7 @@ int sc_config_save(const ScConfig *c) {
         c->assist_enabled, c->passthrough, c->grab, c->loop_hz, c->hud,
         c->use_filter, c->filter_setting, c->graph_selection,
         c->gamepad_name, c->shm_path, c->udp_port,
-        c->lfs_outsim_port, c->lfs_outgauge_port,
+        c->lfs_outsim_port, c->lfs_outgauge_port, c->fh6_out_port,
         c->steering_rate, c->rate_increase_with_speed,
         c->target_slip_deg, c->target_slip_scale,
         c->self_steer_response, c->damping_strength, c->max_self_steer_angle,

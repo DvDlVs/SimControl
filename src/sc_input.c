@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <time.h>
 #include <unistd.h>
 #include <ctype.h>
 #include <math.h>
@@ -410,7 +411,56 @@ static void apply_event(ScInput *in, const struct input_event *ev) {
     }
 }
 
+/* A USB receiver replug while the game is running invalidates the old
+ * evdev node: the grab stays on the zombie fd and the game sees the raw
+ * gamepad again. Re-open + re-grab the new node automatically. */
+static void reacquire_pad(ScInput *in, const ScConfig *cfg) {
+    char name[256] = {0};
+    int fd = open_pad(cfg, name, sizeof(name));
+    if (fd < 0) return;                 /* device not back yet; retry next tick */
+    if (fd == in->pad_fd) { close(fd); return; }
+    if (cfg->grab && ioctl(fd, EVIOCGRAB, 1) < 0) {
+        fprintf(stderr, "simcontrol: EVIOCGRAB on reacquired pad failed (%s)\n",
+                strerror(errno));
+    }
+    ioctl(in->pad_fd, EVIOCGRAB, 0);
+    close(in->pad_fd);
+    in->pad_fd = fd;
+    snprintf(in->pad_name, sizeof(in->pad_name), "%s", name);
+    refresh_axes(in);
+    unsigned char key[(KEY_MAX + 7) / 8];
+    memset(key, 0, sizeof(key));
+    ioctl(in->pad_fd, EVIOCGBIT(EV_KEY, sizeof(key)), key);
+    in->nkey_codes = 0;
+    for (int k = 0; k < KEY_MAX; k++) {
+        if (test_bit(k, key) && in->nkey_codes < KEY_MAX) {
+            if (k >= BTN_MOUSE && k < BTN_JOYSTICK) continue;
+            in->key_codes[in->nkey_codes++] = k;
+        }
+    }
+    fprintf(stderr, "simcontrol: gamepad reacquired ('%s') after replug\n", name);
+}
+
 int sc_input_poll(ScInput *in, const ScConfig *cfg, ScPadState *pad) {
+    {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        double now = (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+        static double last_check = 0.0;
+        if (now - last_check >= 1.0) {
+            last_check = now;
+            if (in && in->pad_fd >= 0) {
+                char link[512], target[512];
+                snprintf(link, sizeof(link), "/proc/self/fd/%d", in->pad_fd);
+                ssize_t nn = readlink(link, target, sizeof(target) - 1);
+                if (nn > 0) {
+                    target[nn] = 0;
+                    if (strstr(target, "(deleted)") != NULL)
+                        reacquire_pad(in, cfg);
+                }
+            }
+        }
+    }
     struct input_event ev;
     while (read(in->pad_fd, &ev, sizeof(ev)) == sizeof(ev)) {
         apply_event(in, &ev);
