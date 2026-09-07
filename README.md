@@ -28,7 +28,7 @@ To launch everything together with the game (Steam → Properties → Launch
 Options):
 
 ```
-/home/user/Projetos/simcontrol-linux/scripts/launch-with-simcontrol.sh %command%
+/path/to/simcontrol-linux/scripts/launch-with-simcontrol.sh %command%
 ```
 
 ## Turn OFF every in-game assist
